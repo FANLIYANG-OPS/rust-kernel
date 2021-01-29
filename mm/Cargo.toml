@@ -1,10 +1,11 @@
 [package]
-name = "rust-kernel"
+name = "mm"
 version = "0.1.0"
 authors = ["fanliyang <1779905848@qq.com>"]
 edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-mm ={path="mm",default-features=false}
+[features]
+default=["std"]
+std=[]
