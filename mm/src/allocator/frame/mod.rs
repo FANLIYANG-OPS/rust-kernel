@@ -5,7 +5,7 @@ pub use self::bump::*;
 mod buddy;
 mod bump;
 
-/// 页帧大小
+/// 页框大小
 #[derive(Clone, Copy, Debug)]
 #[repr(transparent)]
 pub struct FrameCount(usize);
@@ -19,7 +19,7 @@ impl FrameCount {
     }
 }
 
-/// 页帧分配情况
+/// 页框分配情况
 pub struct FrameUsage {
     used: FrameCount,
     total: FrameCount,

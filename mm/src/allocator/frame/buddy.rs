@@ -1,9 +1,7 @@
 use core::{marker::PhantomData, mem};
 
-use alloc::alloc::realloc;
-
 use crate::{
-    allocator, arch, Arch, BumpAllocator, FrameAllocator, PhysicalAddress, VirtualAddress,
+    Arch, BumpAllocator, FrameAllocator, FrameCount, FrameUsage, PhysicalAddress, VirtualAddress,
 };
 
 #[repr(transparent)]
@@ -29,6 +27,7 @@ impl<A> Clone for BuddyEntry<A> {
         }
     }
 }
+impl<A> Copy for BuddyEntry<A> {}
 
 impl<A: Arch> BuddyEntry<A> {
     fn empty() -> Self {
@@ -74,6 +73,7 @@ pub struct BuddyAllocator<A> {
 impl<A: Arch> BuddyAllocator<A> {
     const BUDDY_ENTRIES: usize = A::PAGE_SIZE / mem::size_of::<BuddyEntry<A>>();
     pub unsafe fn new(mut bump_allocator: BumpAllocator<A>) -> Option<Self> {
+        
         let table_phys = bump_allocator.allocate_one()?;
         let table_virt = A::phys_to_virt(table_phys);
         for i in 0..(A::PAGE_SIZE / mem::size_of::<BuddyEntry<A>>()) {
@@ -141,15 +141,91 @@ impl<A: Arch> BuddyAllocator<A> {
 }
 
 impl<A: Arch> FrameAllocator for BuddyAllocator<A> {
-    unsafe fn allocate(&mut self, count: crate::FrameCount) -> Option<PhysicalAddress> {
-        todo!()
+    unsafe fn allocate(&mut self, count: FrameCount) -> Option<PhysicalAddress> {
+        if self.table_virt.data() == 0 {
+            return None;
+        }
+        for entry_i in 0..Self::BUDDY_ENTRIES {
+            let virt = self
+                .table_virt
+                .add(entry_i * mem::size_of::<BuddyEntry<A>>());
+            let mut entry = A::read::<BuddyEntry<A>>(virt);
+            let mut free_page = entry.skip;
+            let mut free_count = 0;
+            for page in entry.skip..entry.pages() {
+                let usage = entry.usage(page)?;
+                if usage.0 == 0 {
+                    free_count += 1;
+                    if free_count == count.data() {
+                        break;
+                    }
+                } else {
+                    free_page = page + 1;
+                    free_count = 0;
+                }
+            }
+            if free_count == count.data() {
+                for page in free_page..(free_page + free_count) {
+                    let mut usage = entry.usage(page)?;
+                    usage.0 += 1;
+                    entry.set_usage(page, usage);
+                    let page_phys = entry.base.add(page << A::PAGE_SHIFT);
+                    let page_virt = A::phys_to_virt(page_phys);
+                    A::write_bytes(page_virt, 0, A::PAGE_SIZE);
+                }
+                if entry.skip == free_page {
+                    entry.skip = free_page + free_count;
+                }
+                entry.used += free_count;
+                A::write(virt, entry);
+                return Some(entry.base.add(free_page << A::PAGE_SHIFT));
+            }
+        }
+        None
     }
 
-    unsafe fn free(&mut self, address: PhysicalAddress, count: crate::FrameCount) {
-        todo!()
+    unsafe fn free(&mut self, base: PhysicalAddress, count: FrameCount) {
+        if self.table_virt.data() == 0 {
+            return;
+        }
+        let size = count.data() * A::PAGE_SIZE;
+        for i in 0..Self::BUDDY_ENTRIES {
+            let virt = self.table_virt.add(i * mem::size_of::<BuddyEntry<A>>());
+            let mut entry = A::read::<BuddyEntry<A>>(virt);
+            if base >= entry.base && base.add(size) <= entry.base.add(entry.size) {
+                let start_page = (base.data() - entry.base.data()) >> A::PAGE_SHIFT;
+                for page in start_page..start_page + count.data() {
+                    let mut usage = entry.usage(page).expect("failed to get usage during free");
+                    if usage.0 > 0 {
+                        usage.0 -= 1;
+                    } else {
+                        panic!("tried to free already free frame");
+                    }
+                    if usage.0 == 0 {
+                        if page < entry.skip {
+                            entry.skip = page;
+                        }
+                        entry.used -= 1;
+                    }
+                    entry
+                        .set_usage(page, usage)
+                        .expect("failed to set usage during free");
+                }
+                A::write(virt, entry);
+                return;
+            }
+        }
     }
 
-    unsafe fn usage(&self) -> crate::FrameUsage {
-        todo!()
+    unsafe fn usage(&self) -> FrameUsage {
+        let mut total = 0;
+        let mut used = 0;
+        for i in 0..Self::BUDDY_ENTRIES {
+            let virt = self.table_virt.add(i * mem::size_of::<BuddyEntry<A>>());
+            let entry = A::read::<BuddyEntry<A>>(virt);
+            total += entry.size >> A::PAGE_SHIFT;
+            used += entry.used;
+        }
+        FrameUsage::new(FrameCount::new(used), FrameCount::new(total))
     }
 }

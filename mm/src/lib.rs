@@ -1,4 +1,4 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+// #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(asm)]
 #![feature(const_fn)]
 
@@ -6,6 +6,8 @@ pub use crate::allocator::*;
 mod allocator;
 pub use crate::arch::*;
 mod arch;
+pub use crate::page::*;
+mod page;
 
 pub const KILO_BYTE: usize = 1024;
 pub const MEGA_BYTE: usize = KILO_BYTE * KILO_BYTE;
