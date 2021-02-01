@@ -67,6 +67,88 @@ impl<A: Arch> Machine<A> {
         let entry = self.map.get(&VirtualAddress::new(page))?;
         Some((entry.address().add(offset), entry.flags()))
     }
+
+    fn read<T>(&self, virt: VirtualAddress) -> T {
+        let virt_data = virt.data();
+        let size = mem::size_of::<T>();
+        if (virt_data & A::PAGE_ADDRESS_MASK) != ((virt_data + (size - 1)) & A::PAGE_ADDRESS_MASK) {
+            panic!(
+                "read: 0x{:X} size 0x {:X} passes page boundary",
+                virt_data, size,
+            );
+        }
+        if let Some((phys, _flags)) = self.translate(virt) {
+            self.read_phys(phys)
+        } else {
+            panic!("read: 0x{:X} size 0x{:X} not present", virt_data, size);
+        }
+    }
+
+    fn write<T>(&mut self, virt: VirtualAddress, value: T) {
+        let virt_data = virt.data();
+        let size = mem::size_of::<T>();
+        if (virt_data & A::PAGE_ADDRESS_MASK) != ((virt_data + (size - 1)) & A::PAGE_ADDRESS_MASK) {
+            panic!(
+                "read: 0x{:X} size 0x {:X} passes page boundary",
+                virt_data, size,
+            );
+        }
+        if let Some((phys, flags)) = self.translate(virt) {
+            if flags & A::ENTRY_FLAG_WRITABLE != 0 {
+                self.write_phys(phys, value);
+            } else {
+                panic!("write: 0x{:X} size 0x{:X} not writable", virt_data, size);
+            }
+        } else {
+            panic!("write: 0x{:X} size 0x{:X} not present", virt_data, size);
+        }
+    }
+
+    fn write_bytes(&mut self, virt: VirtualAddress, value: u8, count: usize) {
+        let virt_data = virt.data();
+        if (virt_data & A::PAGE_ADDRESS_MASK) != ((virt_data + (count - 1)) & A::PAGE_ADDRESS_MASK)
+        {
+            panic!(
+                "write_bytes: 0x{:X} size 0x {:X} passes page boundary",
+                virt_data, count,
+            )
+        }
+        if let Some((phys, flags)) = self.translate(virt) {
+            if flags & A::ENTRY_FLAG_WRITABLE != 0 {
+                self.write_phys_bytes(phys, value, count);
+            } else {
+                panic!(
+                    "write_bytes: 0x{:X} count 0x{:X} not writable",
+                    virt_data, count
+                );
+            }
+        } else {
+            panic!(
+                "write_bytes: 0x{:X} count 0x{:X} not present",
+                virt_data, count
+            );
+        }
+    }
+    fn invalid_data(&mut self, _address: VirtualAddress) {
+        unimplemented!("EmulateArch::invalid_data not implemented");
+    }
+
+    fn invalid_data_all(&mut self) {
+        self.map.clear();
+        let a4 = self.table_addr.data();
+        for i4 in 0..A::PAGE_ENTRIES {
+            let e3 = self.read_phys::<usize>(PhysicalAddress::new(a4 + i4 * A::PAGE_ENTRY_SIZE));
+            let f3 = e3 & A::ENTRY_FLAGS_MASK;
+            if f3 & A::ENTRY_FLAG_PRESENT == 0 {
+                continue;
+            }
+            let a3 = e3 & A::ENTRY_ADDRESS_MASK;
+            for i3 in 0..A::PAGE_ENTRIES {
+                let e2 =
+                    self.read_phys::<usize>(PhysicalAddress::new(a3 + i3 * A::PAGE_ENTRY_SIZE));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
