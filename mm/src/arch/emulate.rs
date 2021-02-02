@@ -1,4 +1,4 @@
-use crate::{Arch, MemoryArea, PageEntry, PhysicalAddress, VirtualAddress, X8664Arch};
+use crate::{Arch, MemoryArea, PageEntry, PhysicalAddress, VirtualAddress, X8664Arch, MEGA_BYTE};
 use core::{marker::PhantomData, mem, ptr};
 use std::collections::BTreeMap;
 
@@ -133,6 +133,14 @@ impl<A: Arch> Machine<A> {
         unimplemented!("EmulateArch::invalid_data not implemented");
     }
 
+    fn get_table(&self) -> PhysicalAddress {
+        self.table_addr
+    }
+    fn set_table(&mut self, address: PhysicalAddress) {
+        self.table_addr = address;
+        self.invalid_data_all();
+    }
+
     fn invalid_data_all(&mut self) {
         self.map.clear();
         let a4 = self.table_addr.data();
@@ -146,10 +154,48 @@ impl<A: Arch> Machine<A> {
             for i3 in 0..A::PAGE_ENTRIES {
                 let e2 =
                     self.read_phys::<usize>(PhysicalAddress::new(a3 + i3 * A::PAGE_ENTRY_SIZE));
+                let f2 = e2 & A::ENTRY_FLAGS_MASK;
+                if f2 & A::ENTRY_FLAG_PRESENT == 0 {
+                    continue;
+                }
+                let a2 = e2 & A::ENTRY_ADDRESS_MASK;
+                for i2 in 0..A::PAGE_ENTRIES {
+                    let e1 =
+                        self.read_phys::<usize>(PhysicalAddress::new(a2 + i2 * A::PAGE_ENTRY_SIZE));
+                    let f1 = e1 & A::ENTRY_FLAGS_MASK;
+                    if f1 & A::ENTRY_FLAG_PRESENT == 0 {
+                        continue;
+                    }
+                    let a1 = e1 & A::ENTRY_ADDRESS_MASK;
+                    for i1 in 0..A::PAGE_ENTRIES {
+                        let e = self
+                            .read_phys::<usize>(PhysicalAddress::new(a1 + i1 * A::PAGE_ENTRY_SIZE));
+                        let f = e & A::ENTRY_FLAGS_MASK;
+                        if f & A::ENTRY_FLAG_PRESENT == 0 {
+                            continue;
+                        }
+                        let page = (i4 << 39) | (i3 << 30) | (i2 << 21) | (i1 << 12);
+                        self.map
+                            .insert(VirtualAddress::new(page), PageEntry::new(e));
+                    }
+                }
             }
         }
     }
 }
+
+const MEMORY_SIZE: usize = 64 * MEGA_BYTE;
+static MEMORY_AREAS: [MemoryArea; 2] = [
+    MemoryArea {
+        base: PhysicalAddress::new(EmulateArch::PAGE_SIZE * 4),
+        size: MEMORY_SIZE / 2 - EmulateArch::PAGE_SIZE * 4,
+    },
+    MemoryArea {
+        base: PhysicalAddress::new(MEMORY_SIZE / 2),
+        size: MEMORY_SIZE / 2,
+    },
+];
+static mut MACHINE: Option<Machine<EmulateArch>> = None;
 
 #[derive(Clone, Copy)]
 pub struct EmulateArch;
@@ -168,18 +214,56 @@ impl Arch for EmulateArch {
     const PHYS_OFFSET: usize = X8664Arch::PHYS_OFFSET;
 
     unsafe fn init() -> &'static [MemoryArea] {
-        todo!()
+        let mut machine = Machine::new(MEMORY_SIZE);
+        let pm14 = 0;
+        let pdp = pm14 + Self::PAGE_SIZE;
+        let flags = Self::ENTRY_FLAG_WRITABLE | Self::ENTRY_FLAG_PRESENT;
+        machine.write_phys::<usize>(
+            PhysicalAddress::new(pm14 + 256 * Self::PAGE_ENTRY_SIZE),
+            pdp | flags,
+        );
+        let pd = pdp + Self::PAGE_SIZE;
+        machine.write_phys::<usize>(PhysicalAddress::new(pdp), pd | flags);
+        let pt = pd + Self::PAGE_SIZE;
+        machine.write_phys::<usize>(PhysicalAddress::new(pd), pt | flags);
+
+        for i in 0..Self::PAGE_ENTRIES {
+            let page = i * Self::PAGE_SIZE;
+            machine.write_phys::<usize>(
+                PhysicalAddress::new(pt + i * Self::PAGE_ENTRY_MASK),
+                page | flags,
+            )
+        }
+        MACHINE = Some(machine);
+        EmulateArch::set_table(PhysicalAddress::new(pm14));
+        &MEMORY_AREAS
     }
 
-    unsafe fn invalid_data(address: crate::VirtualAddress) {
-        todo!()
+    unsafe fn read<T>(address: VirtualAddress) -> T {
+        MACHINE.as_ref().unwrap().read(address)
     }
 
-    unsafe fn table() -> crate::PhysicalAddress {
-        todo!()
+    unsafe fn write<T>(address: VirtualAddress, value: T) {
+        MACHINE.as_mut().unwrap().write(address, value);
     }
 
-    unsafe fn set_table(address: crate::PhysicalAddress) {
-        todo!()
+    unsafe fn write_bytes(address: VirtualAddress, value: u8, count: usize) {
+        MACHINE.as_mut().unwrap().write_bytes(address, value, count);
+    }
+
+    unsafe fn invalid_data_all() {
+        MACHINE.as_mut().unwrap().invalid_data_all();
+    }
+
+    unsafe fn invalid_data(address: VirtualAddress) {
+        MACHINE.as_mut().unwrap().invalid_data(address);
+    }
+
+    unsafe fn table() -> PhysicalAddress {
+        MACHINE.as_mut().unwrap().get_table()
+    }
+
+    unsafe fn set_table(address: PhysicalAddress) {
+        MACHINE.as_mut().unwrap().set_table(address);
     }
 }

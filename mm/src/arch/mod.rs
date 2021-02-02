@@ -4,7 +4,10 @@ use crate::{MemoryArea, PhysicalAddress, VirtualAddress};
 
 mod x86_64;
 pub use self::x86_64::X8664Arch;
+
+#[cfg(feature = "std")]
 mod emulate;
+#[cfg(feature = "std")]
 pub use self::emulate::EmulateArch;
 
 pub trait Arch: Clone + Copy {
