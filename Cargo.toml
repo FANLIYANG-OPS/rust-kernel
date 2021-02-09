@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 mm ={path="mm",default-features=false}
+slab_allocator={path="slab_allocator"}
