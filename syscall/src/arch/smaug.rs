@@ -1,5 +1,6 @@
 use super::error::{Error, Result, ENOSYS};
 
+
 pub unsafe fn syscall_0(_a: usize) -> Result<usize> {
     Err(Error::new(ENOSYS))
 }
