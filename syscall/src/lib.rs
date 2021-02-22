@@ -6,6 +6,7 @@ pub use self::data::*;
 pub use self::error::*;
 pub use self::flag::*;
 pub use self::number::*;
+pub use self::scheme::*;
 
 #[cfg(not(any(target_os = "none", target_os = "smaug")))]
 #[path = "arch/smaug.rs"]
@@ -16,4 +17,4 @@ pub mod data;
 pub mod error;
 pub mod flag;
 pub mod number;
-
+pub mod scheme;
