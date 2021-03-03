@@ -1,6 +1,5 @@
 use core::ops::{BitAnd, BitOr, Not};
 pub trait Io {
-    
     type Value: Copy
         + PartialEq
         + BitAnd<Output = Self::Value>
@@ -9,7 +8,7 @@ pub trait Io {
 
     fn read(&self) -> Self::Value;
     fn write(&mut self, value: Self::Value);
-    
+
     #[inline(always)]
     fn readf(&self, flags: Self::Value) -> bool {
         (self.read() & flags) as Self::Value == flags
@@ -59,3 +58,5 @@ impl<I: Io> WriteOnly<I> {
         self.inner.writef(flags, value)
     }
 }
+
+
