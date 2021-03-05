@@ -1,6 +1,8 @@
 use crate::PartialAllocStrategy;
 use crate::PhysallocFlags;
 use crate::Result;
+use core::mem::{self, MaybeUninit};
+use core::{ptr, slice};
 #[derive(Debug)]
 pub struct PhysBox {
     address: usize,
@@ -48,5 +50,90 @@ impl PhysBox {
     pub fn new(size: usize) -> Result<Self> {
         let address = unsafe { crate::physalloc_0(size)? };
         Ok(Self { address, size })
+    }
+}
+
+impl Drop for PhysBox {
+    fn drop(&mut self) {
+        let _ = unsafe { crate::physfree(self.address, self.size) };
+    }
+}
+
+pub struct Dma<T: ?Sized> {
+    phys: PhysBox,
+    virt: *mut T,
+}
+
+impl<T> Dma<T> {
+    pub fn from_physbox_uninit(phys: PhysBox) -> Result<Dma<MaybeUninit<T>>> {
+        let virt = unsafe { crate::physmap(phys.address, phys.size, crate::PHYSMAP_WRITE)? }
+            as *mut MaybeUninit<T>;
+        Ok(Dma { phys, virt })
+    }
+    pub fn from_physbox_zeroed(phys: PhysBox) -> Result<Dma<MaybeUninit<T>>> {
+        let this = Self::from_physbox_uninit(phys)?;
+        unsafe { ptr::write_bytes(this.virt as *mut MaybeUninit<u8>, 0, this.phys.size) }
+        Ok(this)
+    }
+    pub fn from_physbox(phys: PhysBox, value: T) -> Result<Self> {
+        let this = Self::from_physbox_uninit(phys)?;
+        Ok(unsafe {
+            ptr::write(this.virt, MaybeUninit::new(value));
+            this.assume_init()
+        })
+    }
+    pub fn new(value: T) -> Result<Self> {
+        let phys = PhysBox::new(mem::size_of::<T>())?;
+        Self::from_physbox(phys, value)
+    }
+
+    pub fn zerod() -> Result<Dma<MaybeUninit<T>>> {
+        let phys = PhysBox::new(mem::size_of::<T>())?;
+        Self::from_physbox_zeroed(phys)
+    }
+}
+
+impl<T> Dma<MaybeUninit<T>> {
+    pub unsafe fn assume_init(self) -> Dma<T> {
+        let &Dma {
+            phys: PhysBox { address, size },
+            virt,
+        } = &self;
+        mem::forget(self);
+        Dma {
+            phys: PhysBox { address, size },
+            virt: virt as *mut T,
+        }
+    }
+}
+
+impl<T: ?Sized> Dma<T> {
+    pub fn physical(&self) -> usize {
+        self.phys.address()
+    }
+    pub fn size(&self) -> usize {
+        self.phys.size()
+    }
+    pub fn phys(&self) -> &PhysBox {
+        &self.phys
+    }
+}
+
+impl<T> Dma<[T]> {
+    pub fn from_physbox_uninit_unsized(phys: PhysBox, len: usize) -> Result<Dma<[MaybeUninit<T>]>> {
+        let max_len = phys.size() / mem::size_of::<T>();
+        assert!(len <= max_len);
+        let d = Dma {
+            virt: unsafe {
+                slice::from_raw_parts_mut(
+                    crate::physmap(phys.address, phys.size, crate::PHYSMAP_WRITE)?
+                        as *mut MaybeUninit<T>,
+                    len,
+                )
+            },
+            phys,
+        };
+        
+        Ok(d)
     }
 }
