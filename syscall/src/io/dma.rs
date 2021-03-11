@@ -2,7 +2,9 @@ use crate::PartialAllocStrategy;
 use crate::PhysallocFlags;
 use crate::Result;
 use core::mem::{self, MaybeUninit};
+use core::ops::{Deref, DerefMut};
 use core::{ptr, slice};
+
 #[derive(Debug)]
 pub struct PhysBox {
     address: usize,
@@ -133,7 +135,52 @@ impl<T> Dma<[T]> {
             },
             phys,
         };
-        
         Ok(d)
     }
+
+    pub fn from_physbox_zeroed_unsized(phys: PhysBox, len: usize) -> Result<Dma<[MaybeUninit<T>]>> {
+        let this = Self::from_physbox_uninit_unsized(phys, len)?;
+        unsafe { ptr::write_bytes(this.virt as *mut MaybeUninit<u8>, 0, this.phys.size()) }
+        Ok(this)
+    }
+
+    pub unsafe fn zeroed_unsized(count: usize) -> Result<Self> {
+        let phys = PhysBox::new(mem::size_of::<T>() * count)?;
+        Ok(Self::from_physbox_zeroed_unsized(phys, count)?.assume_init())
+    }
 }
+
+impl<T> Dma<[MaybeUninit<T>]> {
+    pub unsafe fn assume_init(self) -> Dma<[T]> {
+        let &Dma {
+            phys: PhysBox { address, size },
+            virt,
+        } = &self;
+        mem::forget(self);
+        Dma {
+            phys: PhysBox { address, size },
+            virt: virt as *mut [T],
+        }
+    }
+}
+
+impl<T: ?Sized> Deref for Dma<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { &*self.virt }
+    }
+}
+
+impl<T: ?Sized> DerefMut for Dma<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { &mut *self.virt }
+    }
+}
+
+impl<T: ?Sized> Drop for Dma<T> {
+    fn drop(&mut self) {
+        unsafe { ptr::drop_in_place(self.virt) }
+        let _ = unsafe { crate::physunmap(self.virt as *mut u8 as usize) };
+    }
+}
+
