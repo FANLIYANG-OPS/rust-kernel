@@ -6,7 +6,15 @@ edition = "2018"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+crate-type=["staticlib"]
+name="kernel"
+path="src/lib.rs"
+
 [dependencies]
 mm ={path="mm",default-features=false}
 syscall={path="syscall"}
 slab_allocator={path="slab_allocator",optional=true}
+spin="0.5.2"
+log={version="0.4"}
+
